@@ -23,4 +23,5 @@ string data_file = "query_data.csv";
 uint32_t batch_id_number = 1100000;
 bool batch_id_preprocess = true;
 bool sync_ids = false;
+bool enable_binary_encoding = true;
 

@@ -221,11 +221,21 @@ void one_time_query(PIRClient &client, NetClient &net_client, string query_id){
     // Convert from FV plaintext (polynomial) to database element at the client
     vector<uint8_t> elems = client.decode_reply(reply, offset);
 
-    char pt[size_per_item];
+    char * pt = new char[size_per_item];
     for (uint32_t i = 0; i < size_per_item; ++i) {
         pt[i] = elems[i];
     }
-    cout<<"query_id:"<<query_id<<" Retrived data:"<<pt<<endl;
+    if(enable_binary_encoding) {
+        char age;
+        double amount;
+        string date;
+        binary_decode(pt, date, age, amount);
+        int int_age = age-'\0';
+        cout<<"query_id:"<<query_id<<" Retrived data:"<<date<<","<<int_age<<","<<amount<<endl;
+    } else {
+        cout<<"query_id:"<<query_id<<" Retrived data:"<<pt<<endl;
+    }
+    delete[] pt;
 }
 
 void handle_one_batch_query(PIRClient * client, uint32_t query_index) {
@@ -291,22 +301,28 @@ void handle_one_batch_query(PIRClient * client, uint32_t query_index) {
     char path[40];
     sprintf(path, "batch_query_result.data");
     write_batch_result.open(path, ios::out|ios::app);
-    char pt[size_per_item];
+    char * pt = new char [size_per_item];
     for (int i = 0; i < ele_per_ptxt; ++i) {
-        //char * pt;
         if((position == query_number-1) and i==10000%ele_per_ptxt) break; // last batch_query index
-
         vector<uint8_t> elems = client->extract_bytes(result, i);
-
         batch_id = batch_query_ids[position*ele_per_ptxt+i];
         for (int j = 0; j < size_per_item; ++j) {
             pt[j]=elems[j];
         }
-        //cout<<batch_id<<" "<<pt<<endl;
-        write_batch_result<<batch_id<<" "<<pt<< endl;
+        if(enable_binary_encoding) {
+            char age;
+            double amount;
+            string date;
+            binary_decode(pt, date, age, amount);
+            int int_age = age-'\0';
+            write_batch_result<<batch_id<<" "<<date<<","<<int_age<<","<<amount<< endl;
+        } else {
+            write_batch_result<<batch_id<<" "<<pt<< endl;
+        }
     }
     write_batch_result.close();
     close(net_client.connect_fd);
+    delete[] pt;
 }
 
 
