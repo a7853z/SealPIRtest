@@ -104,10 +104,11 @@ void process_id_data_map(){
         id_stream.clear();
         id_data_map[id] = output;
     }
+    cout<<"Server::id data map size:"<<id_data_map.size()<<endl;
     query_data.close();
     auto time_pir_e = high_resolution_clock::now();
     auto time_pir_us = duration_cast<microseconds>(time_pir_e - time_pir_s).count();
-    cout << "Server: PIRServer id_data_map process timemak: " << time_pir_us / 1000 << " ms" << endl;
+    cout << "Server: PIRServer id_data_map process time: " << time_pir_us / 1000 << " ms" << endl;
 }
 
 void sync_id_index(ConnData* conn_data) {
@@ -436,28 +437,111 @@ int handle_batch_query() {
     auto db(make_unique<uint8_t[]>(batch_id_number * size_per_item));
     char * data_buffer = new char[size_per_item];
     string data;
-
-    cout<<"Server::begin batch database preprocess"<<endl;
-    //read batch_id's data
     auto time_pir_s = high_resolution_clock::now();
-
     for (int i = 0; i < batch_id_number; ++i) {
         memcpy(&id, buff+offset, sizeof(id));
         offset+=sizeof(id);
-        data = id_data_map[id];
-        if(enable_binary_encoding) {
-            binary_encode(data, data_buffer);
-            for (int j = 0; j < size_per_item; ++j) {
-                db.get()[i*size_per_item+j]=data_buffer[j];
-            }
-        } else {
-            for (uint64_t j = 0; j < size_per_item; j++) {
-                db.get()[i * size_per_item + j] = data[j];
-                //cout<<db.get()[(i * size_per_item) + j]<<endl;
+        batch_ids_set.insert(id);
+        batch_ids_map[id] = i;
+        if(use_id_data_map) {
+            data = id_data_map[id];
+            if(enable_binary_encoding) {
+                binary_encode(data, data_buffer);
+                for (int j = 0; j < size_per_item; ++j) {
+                    db.get()[i*size_per_item+j]=data_buffer[j];
+                }
+            } else {
+                for (uint64_t j = 0; j < size_per_item; j++) {
+                    db.get()[i * size_per_item + j] = data[j];
+                }
             }
         }
     }
 
+    if(use_id_data_map) {
+        auto time_pir_e = high_resolution_clock::now();
+        auto time_pir_us = duration_cast<microseconds>(time_pir_e - time_pir_s).count();
+        cout << "Server: PIRServer batch pir database setup time: " << time_pir_us / 1000 << " ms" << endl;
+        while (true) {
+            int connect_fd = net_server.wait_connection();
+            thread t(handle_one_batch_query, &server, connect_fd);
+            t.detach();
+        }
+        return 1;
+    }
+
+    cout<<"Server::begin batch database preprocess"<<endl;
+    //read batch_id's data
+    cout<<"Server::begin select "<< batch_id_number << " items."<<endl;
+    auto time_select_s = high_resolution_clock::now();
+    ifstream query_data(data_file.c_str(), ifstream::in);
+    string one_line;
+    string one_id;
+    string output;
+    getline(query_data, one_line); //跳过首行‘id’
+    uint32_t count=0;
+    stringstream id_stream;
+    uint64_t current_id;
+    uint32_t batch_id_index;
+    bool preprocess = true;
+    for (int i = 0; i < 100000000; ++i) {
+        if(!preprocess) break;
+        getline(query_data, one_line);
+        //后面添加id_length, delimiter等conf参数
+        one_id = one_line.substr(0, 18);
+        output = one_line.substr(19, one_line.length());
+        int pad_length = size_per_item-output.length();
+        if (pad_length>0){
+            string pad_str(pad_length,'0');
+            output = output+pad_str;
+        }
+        id_stream<<one_id;
+        id_stream>>current_id;
+        id_stream.clear();
+        if(batch_ids_set.find(current_id)!=batch_ids_set.end()) {
+            batch_id_index = batch_ids_map[current_id];//index in batch_ids
+            batch_id_data_map[batch_id_index] = output;
+            //if(batch_id_index%1000 ==0) cout<<"one picked data:"<<current_id<< " index:" <<batch_id_index<< " data:" <<output<<endl;
+            count++;
+        }
+        if(count == batch_id_number) break;
+    }
+    query_data.close();
+    auto time_select_e = high_resolution_clock::now();
+    auto time_select_us = duration_cast<microseconds>(time_select_e - time_select_s).count();
+    cout << "Server: PIRServer select "<<batch_id_number<<" items time: " << time_select_us / 1000 << " ms" << endl;
+
+    time_pir_s = high_resolution_clock::now();
+    if(preprocess) {
+        //use batch_id and data initialize server's db
+        // Create test database
+        for (uint32_t i = 0; i < batch_id_number; i++) {
+            if(enable_binary_encoding) {
+                data = batch_id_data_map[i];
+                binary_encode(data, data_buffer);
+                for (int j = 0; j < size_per_item; ++j) {
+                    db.get()[i*size_per_item+j]=data_buffer[j];
+                }
+            } else {
+                for (uint64_t j = 0; j < size_per_item; j++) {
+                    db.get()[i * size_per_item + j] = batch_id_data_map[i][j];
+                    //cout<<db.get()[(i * size_per_item) + j]<<endl;
+                }
+            }
+        }
+        delete[] data_buffer;
+        server.set_database(move(db), batch_id_number, size_per_item);
+        //plaintext decomposition
+        server.preprocess_database();
+        cout<<"Server::end batch database preprocess"<<endl;
+        //char split_db_file[40];
+        //sprintf(split_db_file, "batch_split_db.bin");
+        //server.write_split_db2disk(split_db_file);
+    } else {
+        //char split_db_file[40];
+        //sprintf(split_db_file, "batch_split_db.bin");
+        //server.read_split_db_from_disk(split_db_file);
+    }
     auto time_pir_e = high_resolution_clock::now();
     auto time_pir_us = duration_cast<microseconds>(time_pir_e - time_pir_s).count();
     cout << "Server: PIRServer batch pir database setup time: " << time_pir_us / 1000 << " ms" << endl;
@@ -496,8 +580,8 @@ int main(int argc, char* argv[]){
 
 
     if (argc>1 and string(argv[1])=="batch") {
-        process_id_data_map();
-        while(handle_batch_query());
+        if(use_id_data_map) process_id_data_map();
+        return handle_batch_query();
     }
     cout<<"Server::start server!"<<endl;
     //pre-process ids

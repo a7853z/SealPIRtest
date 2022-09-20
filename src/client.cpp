@@ -27,7 +27,7 @@ using namespace seal::util;
 
 set<uint32_t> batch_query_index;
 set<uint64_t> batch_id_set;
-uint64_t * batch_query_ids = new uint64_t[10000];
+uint64_t * batch_query_ids = new uint64_t[10000];  //改成vector
 mutex batch_result_mutex;
 uint32_t d=2;
 
