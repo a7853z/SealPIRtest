@@ -101,6 +101,7 @@ void process_id_data_map(){
             string pad_str(pad_length,'0');
             output = output+pad_str;
         }
+        id_stream.clear();
         id_data_map[id] = output;
     }
     query_data.close();
